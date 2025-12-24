@@ -1,0 +1,149 @@
+- name: Déployer HTML dans les conteneurs Docker et créer un dépôt GitHub
+  hosts: docker_hosts
+  become: true
+
+  vars_prompt:
+    - name: github_token
+      prompt: "Entrez votre token GitHub"
+      private: yes
+    - name: github_owner
+      prompt: "Entrez votre nom d'utilisateur GitHub"
+    - name: repo_name
+      prompt: "Entrez le nom du dépôt GitHub à créer"
+
+  tasks:
+
+    ##############################
+    # CONTENEUR 1 : index.html
+    ##############################
+    - name: Créer le répertoire pour index.html
+      file:
+        path: /var/www/html
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: '0755'
+      when: inventory_hostname == 'projet_AT_1'
+
+    - name: Copier index.html
+      copy:
+        src: "{{ playbook_dir }}/../files/index.html"
+        dest: /var/www/html/index.html
+        owner: ansible
+        group: ansible
+        mode: '0644'
+      when: inventory_hostname == 'projet_AT_1'
+
+    ##############################
+    # CONTENEUR 2 : felicitation.html
+    ##############################
+    - name: Créer le répertoire pour felicitation.html
+      file:
+        path: /var/www/html
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: '0755'
+      when: inventory_hostname == 'projet_AT_2'
+
+    - name: Copier felicitation.html
+      copy:
+        src: "{{ playbook_dir }}/../files/felicitation.html"
+        dest: /var/www/html/felicitation.html
+        owner: ansible
+        group: ansible
+        mode: '0644'
+      when: inventory_hostname == 'projet_AT_2'
+
+    ##############################
+    # NGINX
+    ##############################
+    - name: Reload nginx
+      command: nginx -s reload
+      when: inventory_hostname in ['projet_AT_1', 'projet_AT_2']
+
+    ##############################
+    # GITHUB
+    ##############################
+    - name: Créer un dépôt GitHub (si inexistant)
+      uri:
+        url: "https://api.github.com/user/repos"
+        method: POST
+        headers:
+          Authorization: "token {{ github_token }}"
+          Accept: "application/vnd.github+json"
+        body:
+          name: "{{ repo_name }}"
+          private: false
+        body_format: json
+        status_code: [201, 422]
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Créer le répertoire temporaire pour le dépôt local
+      file:
+        path: /tmp/myrepo
+        state: directory
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Initialiser le dépôt Git local
+      command: git init
+      args:
+        chdir: /tmp/myrepo
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Créer la branche main
+      command: git checkout -B main
+      args:
+        chdir: /tmp/myrepo
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Copier index.html et felicitation.html dans le dépôt local
+      copy:
+        src: "{{ item.src }}"
+        dest: "/tmp/myrepo/{{ item.dest }}"
+      loop:
+        - { src: "../files/index.html", dest: "index.html" }
+        - { src: "../files/felicitation.html", dest: "felicitation.html" }
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Commit des fichiers
+      shell: git add . && git commit -m "Ajout des fichiers HTML" || true
+      args:
+        chdir: /tmp/myrepo
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Supprimer remote existant (si présent)
+      shell: git remote remove origin || true
+      args:
+        chdir: /tmp/myrepo
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Ajouter remote GitHub
+      command: git remote add origin https://{{ github_token }}:@github.com/{{ github_owner }}/{{ repo_name }}.git
+      args:
+        chdir: /tmp/myrepo
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Push sur GitHub
+      command: git push -u origin main --force
+      args:
+        chdir: /tmp/myrepo
+      delegate_to: localhost
+      run_once: true
+      become: false
